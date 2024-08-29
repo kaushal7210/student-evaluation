@@ -5,12 +5,14 @@ import threading
 import pyaudio
 import wave
 import os
-import re
 import pickle
+
+import re
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.stem import PorterStemmer
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer, util
@@ -20,6 +22,14 @@ class SpeechToTextApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Speech to text Conveter")
+        
+        ds=pickle.load(open('preprocess_data.pkl','rb'))
+        
+        q = ds['question']
+        self.question_text = tk.Text(self, height=10, width=100)
+        self.question_text.insert(tk.END,q)        
+        self.question_text.pack(pady=20)
+        
         self.record_button=tk.Button(self,
                                      text="Start Recording",
                                      command=self.start_recording)
@@ -40,43 +50,47 @@ class SpeechToTextApp(tk.Tk):
                                      text="Convert to Text",
                                      command=self.convert_audio_to_text,state=tk.DISABLED)
         self.convert_button.pack(pady=20)
+        self.output_text = tk.Text(self, height=15, width=100)
+        self.output_text.pack(pady=20)
 
         self.audio_file_path="recorded_audio.wav"
         self.recording=False
 
-    def preprocess_text(self, text):
+    def preprocess_text(self,text):
         text=text.lower()
         words=word_tokenize(text)
-        stop_words=(stopwords.words('english'))
-        words=[word for word in words if word not in stop_words]
+        stop_word=set(stopwords.words('english'))
+        words=[word for word in words if word not in stop_word]
         stemmer=PorterStemmer()
-        words=[stemmer.stem(word)for word in words]
+        words=[stemmer.stem(word) for word in words]
 
-        preprocess_text=' '.join(words)
-        return preprocess_text
-    
-    def suggested_answer(self,ans,ds,min_suggestions=5):
+        proprocessed_text=' '.join(words)
+        return proprocessed_text
+
+    def suggest_sections(self,ans,ds,min_suggestions=1):
         ds=pickle.load(open('preprocess_data.pkl','rb'))
-        preprocessed_answer=self.preprocess_text(ans)
-        ans_embedding=model.encode(preprocessed_answer)
-        answer_embedding=model.encode(ds['ans1'].tolist())
-        similarities=util.pytorch_cos_sim(ans_embedding,answer_embedding)[0]
-        similarity_threhold=0.2
-        relevant_indices=[]
+        preprocessed_ans = self.preprocess_text(ans)
+        ans_embedding = model.encode(preprocessed_ans)
+        section_embedding = model.encode(ds['ans1'].tolist())
+        similarities = util.pytorch_cos_sim(ans_embedding,section_embedding)[0]
+        similarity_threhold = 0.2
+        relevant_indices = []
         while len(relevant_indices)<min_suggestions and similarity_threhold>0:
-            relevant_indices=[i for i, sim in enumerate(similarities)if sim>similarity_threhold]
-            similarity_threhold-=0.5 #st=st-0.5
-            sorted_indices=sorted(relevant_indices,key=lambda i: similarities[i],reverse=True)
-            suggestions=[
-                {
-                    'index':i,
-                    'question':ds.iloc[i]['question'],
-                    'ans':ds.iloc[i]['ans'],
-                    'similarity_score':similarities[i].item()
-                }
-                for  i in sorted_indices
-            ]
+            relevant_indices = [i for i, sim in enumerate(similarities)if sim>similarity_threhold]
+            similarity_threhold -= 0.5 #st=st-0.5
+            sorted_indices = sorted(relevant_indices,key=lambda i: similarities[i],reverse=True)
+            suggestions = [
+            {
+                'index': i,
+                'question': ds.iloc[i]['question'],
+                'ans': ds.iloc[i]['ans'],
+                'similarity_score': similarities[i].item()
+            
+            }
+            for i in sorted_indices
+        ]
         return suggestions
+
 
     def start_recording(self):
         self.recording=True
@@ -122,30 +136,32 @@ class SpeechToTextApp(tk.Tk):
             audio_data=r.record(source)
             try:
                 text=r.recognize_google(audio_data)
-                # messagebox.showinfo("Speech to text",text)
+                #messagebox.showinfo("Speech to text",text)
                 ds=pickle.load(open('preprocess_data.pkl','rb'))
-                suggestions=self.suggested_answer(text,ds,min_suggestions=1)
+
+            
+                suggestions = self.suggest_sections(text, ds, min_suggestions = 1)
                 n=1
-                suggestion=suggestions[n-1]
-
-                if suggestions:
-                    for suggestion in suggestions:
-                        print(f"sr no: {suggestion['index']}")
-                        print(f"question:{suggestion['question']}")
-                        print(f"Expected Answer: {suggestion['ans']}")
-                        print(f"Your Answer:{text}")
-                        print(f"similarity score: {round(suggestion['similarity_score']*100,2)}")
-                        print("_________________________________________________________________________________________\n")
-
+                suggestion = suggestions[n-1]
+                if suggestion:
+                    output= (f"sr_no: {suggestion['index']+1}\n"
+                    f"question: {suggestion['question']}\n"
+                    f"Your ans : {text}\n"\
+                    f"Expected ans: {suggestion['ans']}\n"
+                    f"similarity score: {round(suggestion['similarity_score']*100,2)}%\n")
+                    self.output_text.insert(tk.END,output)
+                    
+                    # print("_________________________________________________________________________________________\n")
                 else:
                     print("No record is found")
+
             except sr.UnknownValueError:
                 messagebox.showwarning("Speech to text"," Could not understand the audio")
             except sr.RequestError as e:
                 messagebox.showerror("Speech to text",f"Error occurred : {e}")
 
-                
-
 if __name__=="__main__":
     app=SpeechToTextApp()
     app.mainloop()
+
+    
